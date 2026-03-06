@@ -62,7 +62,7 @@ def run_flask():
 
 # --- BOT SETUP ---
 init_db()
-MISTRAL_KEY = os.environ.get("MISTRAL_API_KEY")
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 TELE_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 AGENT_ID = "ag_019cc2276c1d7585a32da68d0b63278b"
 
