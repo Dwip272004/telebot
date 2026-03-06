@@ -66,7 +66,7 @@ MISTRAL_KEY = os.environ.get("MISTRAL_API_KEY")
 TELE_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 AGENT_ID = "ag_019cc2276c1d7585a32da68d0b63278b"
 
-client = Mistral(api_key=MISTRAL_KEY)
+client = Mistral(api_key=MISTRAL_API_KEY)
 bot = telebot.TeleBot(TELE_TOKEN)
 
 @bot.message_handler(func=lambda message: True)
