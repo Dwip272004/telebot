@@ -1,0 +1,4 @@
+mistralai
+python-telegram-bot
+flask
+python-dotenv
