@@ -1,4 +1,4 @@
 mistralai
-python-telegram-bot
+pyTelegramBotAPI
 flask
 python-dotenv
