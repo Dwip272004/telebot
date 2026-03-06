@@ -1,24 +1,67 @@
 import os
+import json
+import psycopg2
 from flask import Flask
 from threading import Thread
-import telebot # This comes from the pyTelegramBotAPI package
+import telebot
 from mistralai import Mistral
 
-# 1. Setup Flask for Render Health Checks
-# Render needs a web server to keep the "Web Service" active.
+# --- DATABASE CONFIGURATION ---
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
+
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Stores conversation history as a JSON block per user
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS user_memory (
+            user_id BIGINT PRIMARY KEY,
+            history TEXT
+        )
+    ''')
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def load_user_history(user_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT history FROM user_memory WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return json.loads(row[0]) if row else []
+
+def save_user_history(user_id, history):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # We keep the last 15 messages for deep natural context
+    history_json = json.dumps(history[-15:])
+    cur.execute('''
+        INSERT INTO user_memory (user_id, history) 
+        VALUES (%s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history
+    ''', (user_id, history_json))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# --- WEB SERVER FOR RENDER ---
 app = Flask(__name__)
 
 @app.route('/')
-def home(): 
-    return "Task Manager Bot is live!", 200
+def home():
+    return "Your personal assistant is online and remembering.", 200
 
 def run_flask():
-    # Render provides the PORT environment variable automatically
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# 2. Setup Mistral & Telegram
-# These variables must be set in the "Environment" tab on Render
+# --- BOT SETUP ---
+init_db()
 MISTRAL_KEY = os.environ.get("MISTRAL_API_KEY")
 TELE_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 AGENT_ID = "ag_019cc2276c1d7585a32da68d0b63278b"
@@ -26,47 +69,37 @@ AGENT_ID = "ag_019cc2276c1d7585a32da68d0b63278b"
 client = Mistral(api_key=MISTRAL_KEY)
 bot = telebot.TeleBot(TELE_TOKEN)
 
-# Simple in-memory storage for conversation history per user
-# Keeps the last 10 messages so the bot remembers context
-user_sessions = {}
-
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
     
-    # Initialize history for new users
-    if user_id not in user_sessions:
-        user_sessions[user_id] = []
-
-    # Add user message to history
-    user_sessions[user_id].append({"role": "user", "content": message.text})
-
-    # Keep only the last 10 messages to save memory
-    user_sessions[user_id] = user_sessions[user_id][-10:]
+    # 1. Load context from permanent Postgres DB
+    history = load_user_history(user_id)
+    
+    # 2. Add current message
+    history.append({"role": "user", "content": message.text})
 
     try:
-        # Send history to your Mistral Agent
+        # 3. Get response from Mistral Agent
         chat_response = client.agents.complete(
             agent_id=AGENT_ID,
-            messages=user_sessions[user_id]
+            messages=history
         )
         
         bot_reply = chat_response.choices[0].message.content
         
-        # Add assistant response back to history
-        user_sessions[user_id].append({"role": "assistant", "content": bot_reply})
+        # 4. Add reply to history and save back to DB
+        history.append({"role": "assistant", "content": bot_reply})
+        save_user_history(user_id, history)
         
-        # Send the response to the user on Telegram
+        # 5. Reply to Dwip
         bot.reply_to(message, bot_reply, parse_mode='Markdown')
 
     except Exception as e:
-        print(f"Error calling Mistral: {e}")
-        bot.reply_to(message, "I'm having trouble connecting to my brain (Mistral). Try again in a second!")
+        print(f"Error: {e}")
+        bot.reply_to(message, "I'm having a quick moment to think—could you repeat that?")
 
 if __name__ == "__main__":
-    # Start Flask in a background thread
     Thread(target=run_flask).start()
-    
-    # Start the Telegram Bot in the main thread
-    print("🚀 Dwip, your Task Manager Bot is starting...")
+    print("🚀 Your human-like assistant is now live with permanent memory!")
     bot.infinity_polling()
